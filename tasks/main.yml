@@ -1,0 +1,7 @@
+---
+# tasks file for ansible-users
+
+- name: Requirements
+  ansible.builtin.import_tasks: requirements.yml
+  when:
+    - standalone_role

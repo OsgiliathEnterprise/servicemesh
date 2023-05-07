@@ -1,0 +1,56 @@
+---
+dependency:
+  name: galaxy
+  enabled: ${DEPENDENCY_ENABLED:-True}
+  options:
+    role-file: ${REQUIREMENTS_PATH:-requirements-standalone.yml}
+    roles-path: ${MOLECULE_PROJECT_DIRECTORY}/../community
+    requirements-file: requirements-collections.yml
+    collections-path: ${MOLECULE_PROJECT_DIRECTORY}/../community-collections
+driver:
+  name: podman
+platforms:
+  - name: idm.osgiliath.test
+    image: fedora:38
+    # image: ubi9/ubi-init:latest
+    dockerfile: ../common/Dockerfile.j2
+    # registry:
+    #   url: registry.access.redhat.com
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    privileged: True
+    command: "/sbin/init"
+    systemd: True
+    tmpfs:
+      - /run
+      - /tmp
+    dns_servers:
+      - 8.8.8.8
+#    capabilities:
+#      - SYS_ADMIN
+#      - CAP_SYS_TIME
+    # pre_build_image: true
+    groups:
+      - ipaservers
+provisioner:
+  name: ansible
+verifier:
+  name: testinfra
+  env:
+    PYTHONWARNINGS: "ignore:.*U.*mode is deprecated:DeprecationWarning"
+  options:
+    v: 1
+scenario:
+  test_sequence:
+    - dependency
+    - cleanup
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - side_effect
+    - verify
+    - cleanup
+    - destroy

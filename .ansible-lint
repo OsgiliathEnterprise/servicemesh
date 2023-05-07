@@ -1,0 +1,9 @@
+exclude_paths:
+ - .cache/
+ - .tox/
+ - tests
+ - meta/
+ - molecule/
+skip_list:
+ - experimental  # all rules tagged as experimental
+ - '106'  # Role name {} does not match ``^[a-z][a-z0-9_]+$`` pattern
