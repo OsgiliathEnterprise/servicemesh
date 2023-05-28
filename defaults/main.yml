@@ -1,0 +1,4 @@
+---
+# defaults file for ansible-orchestration
+configure_mesh: Yes
+istio_version: 1.17.2

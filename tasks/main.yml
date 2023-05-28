@@ -5,3 +5,8 @@
   ansible.builtin.import_tasks: requirements.yml
   when:
     - standalone_role
+
+- name: Service-mesh
+  ansible.builtin.include_tasks: service-mesh.yml
+  when:
+   - kube_masters_group in group_names

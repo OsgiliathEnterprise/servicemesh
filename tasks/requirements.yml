@@ -1,2 +1,7 @@
 ---
 
+- name: Requirements | import orchestration cli
+  ansible.builtin.import_role:
+    name: tcharl.ansible_orchestration_cli
+  become: Yes
+
