@@ -1,5 +1,25 @@
 ---
 
+- name: Service-mesh | patch calico configuration to apply application-level security
+  ansible.builtin.command: >
+    kubectl exec -ti -n kube-system calicoctl -- /calicoctl \
+    patch FelixConfiguration default --patch \
+    '{"spec": {"policySyncPathPrefix": "/var/run/nodeagent"}}'
+  become: true
+  register: result
+  until: result is succeeded
+  retries: 5
+  delay: 10
+  when:
+    - kube_masters_group in group_names
+
+- name: Service-mesh | create temp directory to host calico mtls policies
+  changed_when: false
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: cni
+  register: mtls_policies_temp_directory
+
 - name: Service-mesh | create istio-system namespace
   ansible.builtin.include_role:
     name: tcharl.ansible_orchestration_cli
@@ -17,28 +37,22 @@
           - path: namespaces/istio-system-ns.yml
     helm_install: Yes
 
-- name: Service-mesh | create remote temporary directory
-  ansible.builtin.tempfile:
-    state: directory
-    suffix: istio
-  register: istio_temp_remote_directory
-
 - name: Service-mesh | download the istio release
   ansible.builtin.get_url:
     url: "https://istio.io/downloadIstio"
-    dest: "{{ istio_temp_remote_directory.path }}/istio-installer.sh"
+    dest: "{{ mtls_policies_temp_directory.path }}/istio-installer.sh"
     mode: '0740'
 
 - name: Service-mesh | download the istio release
-  ansible.builtin.command: "{{ istio_temp_remote_directory.path }}/istio-installer.sh"
+  ansible.builtin.command: "{{ mtls_policies_temp_directory.path }}/istio-installer.sh"
   changed_when: False # to do test
   args:
-    chdir: "{{ istio_temp_remote_directory.path }}"
+    chdir: "{{ mtls_policies_temp_directory.path }}"
 
 - name: Service-mesh | install istio-base
   kubernetes.core.helm:
     name: istio-base
-    chart_ref: "{{ istio_temp_remote_directory.path }}/istio-{{ istio_version }}/manifests/charts/base"
+    chart_ref: "{{ mtls_policies_temp_directory.path }}/istio-{{ istio_version }}/manifests/charts/base"
     release_namespace: istio-system
     create_namespace: true
     kubeconfig: "{{ kube_config_path }}"
@@ -51,7 +65,7 @@
 - name: Service-mesh | install istio-discovery
   kubernetes.core.helm:
     name: istiod
-    chart_ref: "{{ istio_temp_remote_directory.path }}/istio-{{ istio_version }}/manifests/charts/istio-control/istio-discovery"
+    chart_ref: "{{ mtls_policies_temp_directory.path }}/istio-{{ istio_version }}/manifests/charts/istio-control/istio-discovery"
     release_namespace: istio-system
     create_namespace: true
     kubeconfig: "{{ kube_config_path }}"
@@ -64,7 +78,7 @@
 - name: Service-mesh | install istio-ingress
   kubernetes.core.helm:
     name: istio-ingress
-    chart_ref: "{{ istio_temp_remote_directory.path }}/istio-{{ istio_version }}/manifests/charts/gateways/istio-ingress"
+    chart_ref: "{{ mtls_policies_temp_directory.path }}/istio-{{ istio_version }}/manifests/charts/gateways/istio-ingress"
     release_namespace: istio-system
     create_namespace: true
     kubeconfig: "{{ kube_config_path }}"
@@ -77,7 +91,7 @@
 - name: Service-mesh | install istio-egress
   kubernetes.core.helm:
     name: istio-egress
-    chart_ref: "{{ istio_temp_remote_directory.path }}/istio-{{ istio_version }}/manifests/charts/gateways/istio-egress"
+    chart_ref: "{{ mtls_policies_temp_directory.path }}/istio-{{ istio_version }}/manifests/charts/gateways/istio-egress"
     release_namespace: istio-system
     create_namespace: true
     kubeconfig: "{{ kube_config_path }}"
@@ -86,3 +100,49 @@
   retries: 5
   delay: 10
   become: Yes
+
+- name: Service-mesh | copy strict mtls policies
+  ansible.builtin.copy:
+    src: istio-mtls-stricts.yml
+    dest: "{{ mtls_policies_temp_directory.path }}/istio-mtls-stricts.yml"
+    mode: '0600'
+  become: true
+  when:
+    - kube_masters_group in group_names
+
+- name: Service-mesh | apply istio policies
+  ansible.builtin.command: >
+    kubectl apply -f {{ mtls_policies_temp_directory.path }}/istio-mtls-stricts.yml
+  register: result
+  until: result is succeeded
+  retries: 5
+  delay: 10
+  become: true
+  when:
+    - kube_masters_group in group_names
+
+- name: Service-mesh | Download the istio injector calico patch
+  ansible.builtin.get_url:
+    url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/alp/istio-inject-configmap-1.15.yaml"
+    dest: "{{ mtls_policies_temp_directory.path }}/istio-inject-configmap.yaml"
+    mode: '0644'
+    force: true
+  become: True
+
+- name: Service-mesh | patch the injector
+  ansible.builtin.command: >
+    kubectl patch configmap istio-sidecar-injector -n istio-system --patch "$(cat {{ mtls_policies_temp_directory.path }}/istio-inject-configmap.yaml)"
+  register: result
+  until: result is succeeded
+  retries: 5
+  delay: 10
+  become: True
+
+- name: Service-mesh | apply authorization services to the mesh
+  ansible.builtin.command: >
+    kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/alp/istio-app-layer-policy-envoy-v3.yaml
+  register: result
+  until: result is succeeded
+  retries: 5
+  delay: 10
+  become: True
