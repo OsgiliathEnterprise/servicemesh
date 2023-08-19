@@ -1,8 +1,8 @@
 ---
 - name: Converge master
-  hosts: all
+  hosts:
+    - kube_master
   vars:
-    kubernetes_allow_pods_on_master: False
     hostname_reboot: false
     kube_firewall_zone: 'public'
     standalone_role: False

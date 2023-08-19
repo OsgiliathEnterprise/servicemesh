@@ -111,10 +111,10 @@
     - kube_masters_group in group_names
 
 - name: Service-mesh | apply istio policies
-  ansible.builtin.command: >
-    kubectl apply -f {{ mtls_policies_temp_directory.path }}/istio-mtls-stricts.yml
-  register: result
-  until: result is succeeded
+  kubernetes.core.k8s:
+    state: present
+    apply: True
+    src: "{{ mtls_policies_temp_directory.path }}/istio-mtls-stricts.yml"
   retries: 5
   delay: 10
   become: true
@@ -130,19 +130,17 @@
   become: True
 
 - name: Service-mesh | patch the injector
-  ansible.builtin.command: >
-    kubectl patch configmap istio-sidecar-injector -n istio-system --patch "$(cat {{ mtls_policies_temp_directory.path }}/istio-inject-configmap.yaml)"
-  register: result
-  until: result is succeeded
-  retries: 5
-  delay: 10
+  kubernetes.core.k8s:
+    state: patched
+    src: "{{ mtls_policies_temp_directory.path }}/istio-inject-configmap.yaml"
+    namespace: istio-system
+    name: istio-sidecar-injector
+    kind: configmap
   become: True
 
 - name: Service-mesh | apply authorization services to the mesh
-  ansible.builtin.command: >
-    kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/alp/istio-app-layer-policy-envoy-v3.yaml
-  register: result
-  until: result is succeeded
-  retries: 5
-  delay: 10
+  kubernetes.core.k8s:
+    state: present
+    apply: True
+    src: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/alp/istio-app-layer-policy-envoy-v3.yaml"
   become: True

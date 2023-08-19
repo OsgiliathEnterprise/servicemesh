@@ -1,6 +1,5 @@
 ---
 
-- name: Requirements | import orchestration cli
+- name: Requirements | install kubernetes cli
   ansible.builtin.import_role:
-    name: tcharl.ansible_orchestration_cli
-  become: Yes
+    name: tcharl.kube_certmanager

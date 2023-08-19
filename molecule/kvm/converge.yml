@@ -2,9 +2,9 @@
 - name: Converge master
   hosts: all
   vars:
-    kubernetes_allow_pods_on_master: False
     hostname_reboot: false
     kube_firewall_zone: 'public'
+    master_preferred_nic: "eth1"
     standalone_role: False
     preferred_nic: "eth1"
 #        kube_alt_names:
