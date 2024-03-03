@@ -2,4 +2,4 @@
 # defaults file for ansible-orchestration
 configure_mesh: Yes
 calico_version: v3.27.0
-istio_version: 1.20.1
+istio_version: 1.20.3
