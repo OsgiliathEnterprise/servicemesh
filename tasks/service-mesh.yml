@@ -2,7 +2,7 @@
 
 - name: Service-mesh | patch calico configuration to apply application-level security
   ansible.builtin.command: >
-    kubectl exec -ti -n kube-system calicoctl -- /calicoctl \
+    kubectl calico \
     patch FelixConfiguration default --patch \
     '{"spec": {"policySyncPathPrefix": "/var/run/nodeagent"}}'
   become: true
