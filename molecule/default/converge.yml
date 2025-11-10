@@ -4,8 +4,6 @@
     - kube_master
   vars:
     hostname_reboot: false
-    kube_firewall_zone: 'public'
-    standalone_role: False
     preferred_nic: "eth1"
 #        kube_alt_names:
 #          - "kubeadm.osgiliath.net"

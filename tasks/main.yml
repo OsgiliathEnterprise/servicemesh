@@ -1,11 +1,6 @@
 ---
 # tasks file for ansible-users
 
-- name: Requirements
-  ansible.builtin.import_tasks: requirements.yml
-  when:
-    - standalone_role
-
 - name: Service-mesh
   ansible.builtin.include_tasks: service-mesh.yml
   when:

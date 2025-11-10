@@ -124,7 +124,7 @@
 
 - name: Service-mesh | Download the istio injector calico patch
   ansible.builtin.get_url:
-    url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/alp/istio-inject-configmap-1.15.yaml"
+    url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/alp/istio-inject-configmap-{{ calico_configmap_version }}.yaml"
     dest: "{{ mtls_policies_temp_directory.path }}/istio-inject-configmap.yaml"
     mode: '0644'
     force: true
