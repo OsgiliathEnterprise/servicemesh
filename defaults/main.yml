@@ -3,4 +3,4 @@
 configure_mesh: Yes
 calico_version: v3.30.4
 calico_configmap_version: 1.9
-istio_version: 1.28.0
+istio_version: 1.28.1
