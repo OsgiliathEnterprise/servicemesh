@@ -4,8 +4,6 @@
     - kube_master
   vars:
     hostname_reboot: false
-    preferred_nic: "eth1"
-#        kube_alt_names:
-#          - "kubeadm.osgiliath.net"
+    preferred_nic: "ens5"
   roles:
     - role: tcharl.servicemesh

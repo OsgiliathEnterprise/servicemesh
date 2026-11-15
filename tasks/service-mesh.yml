@@ -21,92 +21,277 @@
     suffix: cni
   register: mtls_policies_temp_directory
 
+# The platform installs Calico through the Tigera operator (see tcharl.ansible_orchestration),
+# and the operator manages the csi-node-driver DaemonSet and the csi.tigera.io CSIDriver itself.
+# The standalone csi-driver.yaml manifest must NOT be applied here: its spec.selector
+# (k8s-app + name) differs from the operator-managed one (k8s-app) and DaemonSet selectors
+# are immutable, so the apply fails with 422. We only gate on the operator's CSI being up.
+- name: Service-mesh | wait for the csi.tigera.io CSIDriver installed by the Tigera operator
+  kubernetes.core.k8s_info:
+    api_version: storage.k8s.io/v1
+    kind: CSIDriver
+    name: csi.tigera.io
+    kubeconfig: "{{ kube_config_path }}"
+  register: calico_csi_driver_object
+  until: calico_csi_driver_object.resources | length > 0
+  retries: 30
+  delay: 10
+  become: true
+
+- name: Service-mesh | wait for the Calico CSI driver on all target nodes
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: DaemonSet
+    name: csi-node-driver
+    namespace: calico-system
+    kubeconfig: "{{ kube_config_path }}"
+  register: calico_csi_driver
+  until: >-
+    (calico_csi_driver.resources | length > 0) and
+    ((calico_csi_driver.resources[0].status.numberReady | default(0) | int) > 0) and
+    ((calico_csi_driver.resources[0].status.numberReady | default(0) | int) == (calico_csi_driver.resources[0].status.desiredNumberScheduled | default(0) | int))
+  retries: 30
+  delay: 10
+  become: true
+
 - name: Service-mesh | create istio-system namespace
-  ansible.builtin.include_role:
-    name: tcharl.ansible_orchestration_cli
-  vars:
-    ansible_become: true
-    standalone_role: False
-    kube_sysadmin_client_cert_path: "{{ kube_credential_folder }}/kubeadm.crt"
-    kube_sysadmin_client_key_path: "{{ kube_credential_folder }}/kubeadm.pem"
-    kube_cacert_path: "{{ kubernetes_certificates_path }}ca.crt"
-    descriptor_sets:
-      - url: https://github.com/OsgiliathEnterprise/orchestrator-system-configuration.git
-        kind: git
-        branch: master
-        descriptors:
-          - path: namespaces/istio-system-ns.yml
-    helm_install: Yes
+  kubernetes.core.k8s:
+    state: present
+    api_version: v1
+    kind: Namespace
+    name: istio-system
+    kubeconfig: "{{ kube_config_path }}"
+  become: true
 
 - name: Service-mesh | download the istio release
   ansible.builtin.get_url:
     url: "https://istio.io/downloadIstio"
     dest: "{{ mtls_policies_temp_directory.path }}/istio-installer.sh"
     mode: '0740'
+  changed_when: false
 
 - name: Service-mesh | download the istio release
   ansible.builtin.command: "{{ mtls_policies_temp_directory.path }}/istio-installer.sh"
   changed_when: False # to do test
+  environment:
+    ISTIO_VERSION: "{{ istio_version }}"
   args:
     chdir: "{{ mtls_policies_temp_directory.path }}"
 
-- name: Service-mesh | install istio-base
-  kubernetes.core.helm:
-    name: istio-base
-    chart_ref: "{{ mtls_policies_temp_directory.path }}/istio-{{ istio_version }}/manifests/charts/base"
-    release_namespace: istio-system
-    create_namespace: true
-    kubeconfig: "{{ kube_config_path }}"
-  register: result
-  until: result is succeeded
-  retries: 5
-  delay: 10
-  become: Yes
+- name: Service-mesh | check for Helm when migrating existing installations
+  ansible.builtin.command: helm version --short
+  register: helm_binary
+  changed_when: false
+  failed_when: false
 
-- name: Service-mesh | install istio-discovery
+- name: Service-mesh | remove legacy Helm-managed Istio releases
   kubernetes.core.helm:
-    name: istiod
-    chart_ref: "{{ mtls_policies_temp_directory.path }}/istio-{{ istio_version }}/manifests/charts/istio-control/istio-discovery"
+    name: "{{ item }}"
+    state: absent
     release_namespace: istio-system
-    create_namespace: true
     kubeconfig: "{{ kube_config_path }}"
-  register: result
-  until: result is succeeded
-  retries: 5
-  delay: 10
-  become: Yes
+    wait: true
+    wait_timeout: 300
+  loop:
+    - istio-ingress
+    - istio-egress
+    - istiod
+    - istio-base
+  when: helm_binary.rc == 0
+  become: true
 
-- name: Service-mesh | install istio-ingress
-  kubernetes.core.helm:
-    name: istio-ingress
-    chart_ref: "{{ mtls_policies_temp_directory.path }}/istio-{{ istio_version }}/manifests/charts/gateways/istio-ingress"
-    release_namespace: istio-system
-    create_namespace: true
-    kubeconfig: "{{ kube_config_path }}"
-  register: result
-  until: result is succeeded
-  retries: 5
-  delay: 10
-  become: Yes
+- name: Service-mesh | configure Istio with Calico Dikastes templates
+  ansible.builtin.template:
+    src: istio-operator-dikastes.yml.j2
+    dest: "{{ mtls_policies_temp_directory.path }}/istio-operator-dikastes.yml"
+    mode: '0600'
+  changed_when: false
+  become: true
 
-- name: Service-mesh | install istio-egress
-  kubernetes.core.helm:
-    name: istio-egress
-    chart_ref: "{{ mtls_policies_temp_directory.path }}/istio-{{ istio_version }}/manifests/charts/gateways/istio-egress"
-    release_namespace: istio-system
-    create_namespace: true
-    kubeconfig: "{{ kube_config_path }}"
-  register: result
-  until: result is succeeded
+- name: Service-mesh | render Istio from the pinned operator configuration
+  ansible.builtin.command:
+    argv:
+      - "{{ mtls_policies_temp_directory.path }}/istio-{{ istio_version }}/bin/istioctl"
+      - manifest
+      - generate
+      - -f
+      - "{{ mtls_policies_temp_directory.path }}/istio-operator-dikastes.yml"
+  register: generated_istio_manifest
+  changed_when: false
   retries: 5
   delay: 10
-  become: Yes
+  until: generated_istio_manifest is succeeded
+  environment:
+    KUBECONFIG: "{{ kube_config_path }}"
+  become: true
+
+- name: Service-mesh | write rendered Istio resources
+  ansible.builtin.copy:
+    # istioctl renders the validation webhook with `failurePolicy: Ignore` as a
+    # bootstrap value only; istiod's webhook controller owns the day-2 state and
+    # immediately rewrites it to `Fail` (with the caBundle) once the endpoint is
+    # ready — see the istio-discovery chart validatingwebhookconfiguration.yaml
+    # comment "Fail open until the validation webhook is ready. The webhook
+    # controller will update this to `Fail`". Re-applying the rendered `Ignore`
+    # makes every converge flip the field back and forth with istiod, so write
+    # the manifest with the steady-state value. There is exactly one
+    # `failurePolicy: Ignore` occurrence in the rendered manifest (the
+    # istio-validator ValidatingWebhookConfiguration).
+    content: "{{ generated_istio_manifest.stdout | replace('failurePolicy: Ignore', 'failurePolicy: Fail') }}"
+    dest: "{{ mtls_policies_temp_directory.path }}/istio-manifest.yml"
+    mode: '0600'
+  changed_when: false
+  become: true
+
+- name: Service-mesh | apply the rendered Istio resources
+  kubernetes.core.k8s:
+    state: present
+    apply: true
+    src: "{{ mtls_policies_temp_directory.path }}/istio-manifest.yml"
+    kubeconfig: "{{ kube_config_path }}"
+  become: true
+
+# The Istio chart renders the gateway Deployments with `sidecar.istio.io/inject:
+# "false"` and a complete `istio-proxy` container (proxy router mode), so the
+# sidecar injector skips them and an annotation-only patch is inert — the
+# injector would also replace the router proxy with a sidecar-mode one. The
+# rendered manifests are static (no operator reconciles these Deployments), so
+# add the Dikastes sidecar with a direct strategic-merge patch: containers and
+# volumes merge by name, keeping the existing istio-proxy and only appending
+# its /var/run/dikastes mount. The probe command mirrors the upstream
+# v3.33 alp injector template: the unified calico/calico image has no
+# /healthz binary, health is checked over the dikastes gRPC socket with
+# `calico component dikastes health` (see projectcalico/calico
+# app-policy/pkg/dikastes/command.go).
+- name: Service-mesh | configure gateway Dikastes sidecars
+  kubernetes.core.k8s:
+    state: patched
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ item }}"
+    namespace: istio-system
+    kubeconfig: "{{ kube_config_path }}"
+    resource_definition:
+      spec:
+        template:
+          metadata:
+            annotations:
+              inject.istio.io/templates: sidecar,dikastes-gateway
+          spec:
+            containers:
+              - name: istio-proxy
+                volumeMounts:
+                  - mountPath: /var/run/dikastes
+                    name: dikastes-sock
+              - name: dikastes
+                image: "calico/calico:{{ calico_version }}"
+                command: ["/usr/bin/calico", "component", "dikastes"]
+                args:
+                  - server
+                  - -l
+                  - /var/run/dikastes/dikastes.sock
+                  - -d
+                  - /var/run/felix/nodeagent/socket
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  runAsGroup: 0
+                  runAsNonRoot: false
+                  runAsUser: 0
+                livenessProbe:
+                  exec:
+                    command:
+                      - /usr/bin/calico
+                      - component
+                      - dikastes
+                      - health
+                      - liveness
+                  initialDelaySeconds: 3
+                  periodSeconds: 3
+                readinessProbe:
+                  exec:
+                    command:
+                      - /usr/bin/calico
+                      - component
+                      - dikastes
+                      - health
+                      - readiness
+                  initialDelaySeconds: 3
+                  periodSeconds: 3
+                volumeMounts:
+                  - mountPath: /var/run/dikastes
+                    name: dikastes-sock
+                  - mountPath: /var/run/felix
+                    name: felix-sync
+            volumes:
+              - name: dikastes-sock
+                emptyDir:
+                  medium: Memory
+              - name: felix-sync
+                csi:
+                  driver: csi.tigera.io
+  become: true
+  loop:
+    - istio-ingressgateway
+    - istio-egressgateway
+
+# The gateway rollout is triggered ~2 s after the Deployments are first
+# created, so the new pods must cold-pull calico/calico (hundreds of MB)
+# from Docker Hub on a freshly provisioned VM: a previous run exceeded the
+# former 30x10 s budget while the pod was still pulling (egress hit the
+# controller-manager ProgressDeadlineExceeded at exactly 600 s). Keep a
+# generous budget and capture pod state below when it is exhausted.
+- name: Service-mesh | wait for the ingress and egress gateways
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ item }}"
+    namespace: istio-system
+    kubeconfig: "{{ kube_config_path }}"
+  register: istio_gateway
+  until: >-
+    (istio_gateway.resources | length > 0) and
+    ((istio_gateway.resources[0].status.availableReplicas | default(0)
+    | int) > 0)
+  retries: 90
+  delay: 10
+  loop:
+    - istio-ingressgateway
+    - istio-egressgateway
+  become: true
+  ignore_errors: true
+
+# Only runs when the wait above exhausted its budget: the Deployment status
+# alone cannot tell a slow calico/calico image pull from a crashing dikastes
+# container (e.g. felix policy-sync socket not served yet), so dump the
+# gateway pods' container statuses/conditions for triage before failing.
+- name: Service-mesh | collect gateway pod diagnostics
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: istio-system
+    label_selectors:
+      - "app={{ item }}"
+  register: istio_gateway_pods
+  when: istio_gateway is failed
+  loop:
+    - istio-ingressgateway
+    - istio-egressgateway
+  become: true
+
+- name: Service-mesh | fail when a gateway did not become available
+  ansible.builtin.assert:
+    that:
+      - istio_gateway is not failed
+    fail_msg: >-
+      An istio-system gateway never reported availableReplicas > 0; see the
+      'collect gateway pod diagnostics' task output for container statuses.
 
 - name: Service-mesh | copy strict mtls policies
   ansible.builtin.copy:
     src: istio-mtls-stricts.yml
     dest: "{{ mtls_policies_temp_directory.path }}/istio-mtls-stricts.yml"
     mode: '0600'
+  changed_when: false
   become: true
   when:
     - kube_masters_group in group_names
@@ -121,23 +306,6 @@
   become: true
   when:
     - kube_masters_group in group_names
-
-- name: Service-mesh | Download the istio injector calico patch
-  ansible.builtin.get_url:
-    url: "https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/alp/istio-inject-configmap-{{ calico_configmap_version }}.yaml"
-    dest: "{{ mtls_policies_temp_directory.path }}/istio-inject-configmap.yaml"
-    mode: '0644'
-    force: true
-  become: True
-
-- name: Service-mesh | patch the injector
-  kubernetes.core.k8s:
-    state: patched
-    src: "{{ mtls_policies_temp_directory.path }}/istio-inject-configmap.yaml"
-    namespace: istio-system
-    name: istio-sidecar-injector
-    kind: configmap
-  become: True
 
 - name: Service-mesh | apply authorization services to the mesh
   kubernetes.core.k8s:

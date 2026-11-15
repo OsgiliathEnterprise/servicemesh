@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: alp-policy-test
+  labels:
+    istio-injection: enabled
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alp-test-server
+  namespace: alp-policy-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alp-test-server
+  template:
+    metadata:
+      labels:
+        app: alp-test-server
+      annotations:
+        inject.istio.io/templates: sidecar,dikastes
+    spec:
+      containers:
+        - name: server
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alp-test-server
+  namespace: alp-policy-test
+spec:
+  selector:
+    app: alp-test-server
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alp-test-client
+  namespace: alp-policy-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alp-test-client
+  template:
+    metadata:
+      labels:
+        app: alp-test-client
+    spec:
+      containers:
+        - name: client
+          image: curlimages/curl:8.10.1
+          command:
+            - sh
+            - -c
+            - sleep infinity
+---
+apiVersion: projectcalico.org/v3
+kind: GlobalNetworkPolicy
+metadata:
+  name: alp-test-server-allow-root-get
+spec:
+  order: 100
+  selector: app == 'alp-test-server'
+  types:
+    - Ingress
+  ingress:
+    - action: Allow
+      http:
+        methods:
+          - GET
+        paths:
+          - exact: /

@@ -4,8 +4,8 @@
     - kube_master
   vars:
     hostname_reboot: false
-    preferred_nic: "eth1"
-    master_preferred_nic: "eth1"
+    preferred_nic: "enp0s5"
+    master_preferred_nic: "enp0s5"
 #        kube_alt_names:
 #          - "kubeadm.osgiliath.net"
   roles:

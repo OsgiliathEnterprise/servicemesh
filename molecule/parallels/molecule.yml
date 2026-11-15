@@ -8,11 +8,33 @@ dependency:
     force: true
 driver:
   name: vagrant
+  # Molecule does not merge lists: override with the full option set.
+  # These become ansible_ssh_common_args in the generated inventory, which
+  # the ssh plugin appends AFTER [ssh_connection] ssh_args from the cfg.
+  ssh_connection_options:
+    - '-o UserKnownHostsFile=/dev/null'
+    - '-o ControlMaster=auto'
+    - '-o ControlPersist=1600s'
+    - '-o ForwardX11=no'
+    - '-o LogLevel=ERROR'
+    - '-o IdentitiesOnly=yes'
+    - '-o StrictHostKeyChecking=no'
   provider:
     name: parallels
 platforms:
+  - name: idm.osgiliath.test
+    box: ${TESTBOX:-bento/fedora-43}
+    provider_options:
+      cpus: 2
+      memory: 5120
+    interfaces:
+      - type: dhcp
+        auto_config: true
+        network_name: private_network
+    groups:
+      - ipaservers
   - name: master.osgiliath.test
-    box: ${TESTBOX:-bento/fedora-42}
+    box: ${TESTBOX:-bento/fedora-43}
     provider_options:
       cpus: 2
       memory: 5120
@@ -23,19 +45,8 @@ platforms:
     groups:
       - kube_master
       - ipaclients
-  - name: idm.osgiliath.test
-    box: ${TESTBOX:-bento/fedora-42}
-    provider_options:
-      cpus: 2
-      memory: 5120
-    interfaces:
-      - type: dhcp
-        auto_config: true
-        network_name: private_network
-    groups:
-      - ipaservers
   - name: node1.osgiliath.test
-    box: ${TESTBOX:-bento/fedora-42}
+    box: ${TESTBOX:-bento/fedora-43}
     provider_options:
       cpus: 2
       memory: 5120
@@ -48,12 +59,14 @@ platforms:
       - ipaclients
 provisioner:
   name: ansible
-#  config_options:
-#    defaults:
-#      forks: 20
-#   ssh_connection:
-#     pipelining: true
-#      ssh_args: -o ControlMaster=auto -o ControlPersist=6000s
+  env:
+    ANSIBLE_COLLECTIONS_PATH: "${MOLECULE_PROJECT_DIRECTORY}/../community-collections:${HOME}/.ansible/collections:/usr/share/ansible/collections"
+    ANSIBLE_VERBOSITY: 2
+  config_options:
+    defaults:
+      remote_tmp: /tmp
+    ssh_connection:
+      pipelining: true
 verifier:
   name: testinfra
   env:
@@ -70,7 +83,7 @@ scenario:
     - create
     - prepare
     - converge
-    # - idempotence
+    - idempotence
     - side_effect
     - verify
     - cleanup

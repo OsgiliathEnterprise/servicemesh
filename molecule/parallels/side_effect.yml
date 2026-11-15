@@ -1,0 +1,61 @@
+---
+- name: Deploy Calico application-layer policy test workloads
+  hosts: kube_master
+  become: true
+  tasks:
+    - name: Copy the application-layer policy test fixture
+      ansible.builtin.copy:
+        src: resources/alp-test.yml
+        dest: /tmp/alp-test.yml
+        mode: '0600'
+
+    - name: Apply the application-layer policy test fixture
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - apply
+          - --filename
+          - /tmp/alp-test.yml
+      register: alp_fixture_apply
+      changed_when: "'unchanged' not in alp_fixture_apply.stdout"
+
+    # Exception (no native equivalent): restart the ALP server Deployment so its
+    # pods are re-injected with the current dikastes injector template even when
+    # the fixture manifest itself is unchanged (e.g. after a template fix). Only
+    # do that when the apply created nothing: freshly created pods already carry
+    # the current template, and restarting them seconds after creation stacks a
+    # second rollout on a pod that has not finished starting, leaving a doomed
+    # Terminating pod to race the verify tests over the label selector.
+    - name: Restart the application test server so the sidecar template is re-applied
+      when: alp_fixture_apply is not changed
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - rollout
+          - restart
+          - deployment/alp-test-server
+          - --namespace=alp-policy-test
+      register: alp_server_restart
+      changed_when: "'restarted' in alp_server_restart.stdout"
+
+    - name: Wait for the application test server
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - rollout
+          - status
+          - deployment/alp-test-server
+          - --namespace=alp-policy-test
+          - --timeout=300s
+      changed_when: false
+
+    - name: Wait for the application test client
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - rollout
+          - status
+          - deployment/alp-test-client
+          - --namespace=alp-policy-test
+          - --timeout=300s
+      changed_when: false
