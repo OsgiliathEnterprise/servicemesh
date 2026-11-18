@@ -56,9 +56,7 @@
     company_realm_password: '123ADMin'
     company_ad_password: '123ADmPass'
 - name: configure containerization prereq # Execute master and nodes at the same time: one fact is created by the master and reused by nodes
-  hosts: # use this order: master should be created before node
-    - master.osgiliath.test
-    - node1.osgiliath.test
+  hosts: kube_master,kube_node
   roles:
     - role: geerlingguy.swap
     - role: geerlingguy.containerd
@@ -67,9 +65,7 @@
   become: Yes
 
 - name: Prepare Kubernetes
-  hosts:
-    - master.osgiliath.test
-    - node1.osgiliath.test
+  hosts: kube_master,kube_node
   roles:
     - role: tcharl.ansible_orchestration
   vars:
